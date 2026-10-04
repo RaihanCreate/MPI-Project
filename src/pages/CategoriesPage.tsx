@@ -1,98 +1,69 @@
-import { useEffect, useState, useCallback } from 'react';
-import { supabase, type Category } from '@/lib/supabase';
+import { useState, useMemo } from 'react';
+import { useStore } from '@/lib/store';
 import { Plus, Pencil, Trash2, Tags } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 
 type CategoriesPageProps = {
+  store: ReturnType<typeof useStore>;
   onToast: (message: string, type?: 'success' | 'error') => void;
 };
 
-export default function CategoriesPage({ onToast }: CategoriesPageProps) {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
+export default function CategoriesPage({ store, onToast }: CategoriesPageProps) {
+  const { categories, products } = store;
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Category | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const fetchCategories = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase.from('categories').select('*').order('name');
-    if (!error && data) {
-      setCategories(data as Category[]);
-      const { data: products } = await supabase.from('products').select('category_id');
-      const c: Record<string, number> = {};
-      (products ?? []).forEach((p) => {
-        const cid = (p as { category_id: string | null }).category_id;
-        if (cid) c[cid] = (c[cid] ?? 0) + 1;
-      });
-      setCounts(c);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    products.forEach((p) => {
+      if (p.category_id) c[p.category_id] = (c[p.category_id] ?? 0) + 1;
+    });
+    return c;
+  }, [products]);
 
   const openAdd = () => {
-    setEditing(null);
+    setEditingId(null);
     setName('');
     setDescription('');
     setModalOpen(true);
   };
 
-  const openEdit = (cat: Category) => {
-    setEditing(cat);
+  const openEdit = (id: string) => {
+    const cat = categories.find((c) => c.id === id);
+    if (!cat) return;
+    setEditingId(id);
     setName(cat.name);
     setDescription(cat.description ?? '');
     setModalOpen(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!name.trim()) {
       onToast('Nama kategori wajib diisi', 'error');
       return;
     }
     setSaving(true);
-    if (editing) {
-      const { error } = await supabase
-        .from('categories')
-        .update({ name: name.trim(), description: description.trim() })
-        .eq('id', editing.id);
-      if (error) onToast('Gagal menyimpan', 'error');
-      else {
-        onToast('Kategori diperbarui');
-        setModalOpen(false);
-        fetchCategories();
-      }
+    if (editingId) {
+      store.updateCategory(editingId, { name: name.trim(), description: description.trim() });
+      onToast('Kategori diperbarui');
+      setModalOpen(false);
     } else {
-      const { error } = await supabase
-        .from('categories')
-        .insert({ name: name.trim(), description: description.trim() });
-      if (error) onToast('Gagal menambah kategori', 'error');
-      else {
-        onToast('Kategori ditambahkan');
-        setModalOpen(false);
-        fetchCategories();
-      }
+      store.addCategory({ name: name.trim(), description: description.trim() });
+      onToast('Kategori ditambahkan');
+      setModalOpen(false);
     }
     setSaving(false);
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!deleteId) return;
-    const { error } = await supabase.from('categories').delete().eq('id', deleteId);
-    if (error) {
-      onToast('Gagal menghapus kategori', 'error');
-    } else {
-      onToast('Kategori dihapus');
-      fetchCategories();
-    }
+    store.deleteCategory(deleteId);
+    onToast('Kategori dihapus');
     setDeleteId(null);
   };
 
@@ -104,7 +75,7 @@ export default function CategoriesPage({ onToast }: CategoriesPageProps) {
         </button>
       </div>
 
-      {loading ? (
+      {store.loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => (
             <div key={i} className="card p-6 animate-pulse">
@@ -131,7 +102,7 @@ export default function CategoriesPage({ onToast }: CategoriesPageProps) {
                   <Tags className="w-6 h-6 text-coffee-600" />
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => openEdit(cat)} className="p-2 rounded-lg hover:bg-coffee-100 text-coffee-600">
+                  <button onClick={() => openEdit(cat.id)} className="p-2 rounded-lg hover:bg-coffee-100 text-coffee-600">
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button onClick={() => setDeleteId(cat.id)} className="p-2 rounded-lg hover:bg-red-50 text-red-500">
@@ -156,7 +127,7 @@ export default function CategoriesPage({ onToast }: CategoriesPageProps) {
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? 'Edit Kategori' : 'Tambah Kategori'}
+        title={editingId ? 'Edit Kategori' : 'Tambah Kategori'}
       >
         <div className="space-y-4">
           <div>
@@ -182,7 +153,7 @@ export default function CategoriesPage({ onToast }: CategoriesPageProps) {
           <div className="flex gap-3 justify-end pt-2">
             <button onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
             <button onClick={handleSave} disabled={saving} className="btn-primary">
-              {saving ? 'Menyimpan...' : editing ? 'Simpan' : 'Tambah'}
+              {saving ? 'Menyimpan...' : editingId ? 'Simpan' : 'Tambah'}
             </button>
           </div>
         </div>

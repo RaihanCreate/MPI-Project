@@ -1,12 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
-import { supabase, type Product, type Category } from '@/lib/supabase';
+import { useState } from 'react';
+import { useStore } from '@/lib/store';
 import { Plus, Search, Pencil, Trash2, Package } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import Toast from '@/components/Toast';
-import { useCategories } from '@/hooks/useCategories';
 
 type ProductsPageProps = {
+  store: ReturnType<typeof useStore>;
   onToast: (message: string, type?: 'success' | 'error') => void;
 };
 
@@ -32,31 +31,15 @@ const emptyForm: FormState = {
   sell_price: '0',
 };
 
-export default function ProductsPage({ onToast }: ProductsPageProps) {
-  const { categories } = useCategories();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function ProductsPage({ store, onToast }: ProductsPageProps) {
+  const { products, categories } = store;
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Product | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  const fetchProducts = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('products')
-      .select('*, categories(*)')
-      .order('name');
-    if (!error && data) setProducts(data as Product[]);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
 
   const filtered = products.filter((p) => {
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -66,13 +49,15 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
   });
 
   const openAdd = () => {
-    setEditing(null);
+    setEditingId(null);
     setForm(emptyForm);
     setModalOpen(true);
   };
 
-  const openEdit = (p: Product) => {
-    setEditing(p);
+  const openEdit = (id: string) => {
+    const p = products.find((x) => x.id === id);
+    if (!p) return;
+    setEditingId(id);
     setForm({
       name: p.name,
       category_id: p.category_id ?? '',
@@ -86,7 +71,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
     setModalOpen(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.name.trim()) {
       onToast('Nama produk wajib diisi', 'error');
       return;
@@ -108,47 +93,32 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
       sell_price: Number(form.sell_price) || 0,
     };
 
-    if (editing) {
-      const { error } = await supabase.from('products').update(payload).eq('id', editing.id);
-      if (error) {
-        onToast('Gagal menyimpan perubahan', 'error');
-      } else {
-        onToast('Produk berhasil diperbarui');
-        setModalOpen(false);
-        fetchProducts();
-      }
+    if (editingId) {
+      store.updateProduct(editingId, payload);
+      onToast('Produk berhasil diperbarui');
+      setModalOpen(false);
     } else {
-      const { error } = await supabase.from('products').insert(payload);
-      if (error) {
-        onToast('Gagal menambah produk', 'error');
-      } else {
-        onToast('Produk berhasil ditambahkan');
-        setModalOpen(false);
-        fetchProducts();
-      }
+      store.addProduct(payload);
+      onToast('Produk berhasil ditambahkan');
+      setModalOpen(false);
     }
     setSaving(false);
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!deleteId) return;
-    const { error } = await supabase.from('products').delete().eq('id', deleteId);
-    if (error) {
-      onToast('Gagal menghapus produk', 'error');
-    } else {
-      onToast('Produk berhasil dihapus');
-      fetchProducts();
-    }
+    store.deleteProduct(deleteId);
+    onToast('Produk berhasil dihapus');
     setDeleteId(null);
   };
 
   const formatRupiah = (n: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n);
 
-  const categoryName = (p: Product) =>
-    (p.categories as unknown as { name: string } | null)?.name ?? '—';
+  const categoryName = (categoryId: string | null) =>
+    categories.find((c) => c.id === categoryId)?.name ?? '—';
 
-  const isLowStock = (p: Product) => p.min_stock_level > 0 && p.stock_quantity <= p.min_stock_level;
+  const isLowStock = (stock: number, min: number) => min > 0 && stock <= min;
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -170,7 +140,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
           className="input-field sm:w-52"
         >
           <option value="all">Semua Kategori</option>
-          {categories.map((c: Category) => (
+          {categories.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
@@ -180,7 +150,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
       </div>
 
       {/* Table / cards */}
-      {loading ? (
+      {store.loading ? (
         <div className="space-y-3">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="card p-5 animate-pulse">
@@ -224,10 +194,10 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
                 {filtered.map((p) => (
                   <tr key={p.id} className="hover:bg-coffee-50/50 transition-colors">
                     <td className="px-5 py-4 font-semibold text-coffee-950">{p.name}</td>
-                    <td className="px-5 py-4 text-coffee-600">{categoryName(p)}</td>
+                    <td className="px-5 py-4 text-coffee-600">{categoryName(p.category_id)}</td>
                     <td className="px-5 py-4 text-coffee-400">{p.sku || '—'}</td>
                     <td className="px-5 py-4 text-right">
-                      <span className={`badge ${isLowStock(p) ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                      <span className={`badge ${isLowStock(p.stock_quantity, p.min_stock_level) ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
                         {p.stock_quantity} {p.unit}
                       </span>
                     </td>
@@ -236,7 +206,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
                     <td className="px-5 py-4 text-right text-coffee-600">{formatRupiah(p.sell_price)}</td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-center gap-1">
-                        <button onClick={() => openEdit(p)} className="p-2 rounded-lg hover:bg-coffee-100 text-coffee-600 transition-colors">
+                        <button onClick={() => openEdit(p.id)} className="p-2 rounded-lg hover:bg-coffee-100 text-coffee-600 transition-colors">
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button onClick={() => setDeleteId(p.id)} className="p-2 rounded-lg hover:bg-red-50 text-red-500 transition-colors">
@@ -257,10 +227,10 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="min-w-0">
                     <p className="font-semibold text-coffee-950 truncate">{p.name}</p>
-                    <p className="text-xs text-coffee-400">{categoryName(p)} · {p.sku || 'tanpa kode'}</p>
+                    <p className="text-xs text-coffee-400">{categoryName(p.category_id)} · {p.sku || 'tanpa kode'}</p>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={() => openEdit(p)} className="p-2 rounded-lg hover:bg-coffee-100 text-coffee-600">
+                    <button onClick={() => openEdit(p.id)} className="p-2 rounded-lg hover:bg-coffee-100 text-coffee-600">
                       <Pencil className="w-4 h-4" />
                     </button>
                     <button onClick={() => setDeleteId(p.id)} className="p-2 rounded-lg hover:bg-red-50 text-red-500">
@@ -271,7 +241,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div className="flex justify-between px-3 py-2 rounded-lg bg-coffee-50">
                     <span className="text-coffee-500">Stok</span>
-                    <span className={`font-semibold ${isLowStock(p) ? 'text-amber-600' : 'text-green-600'}`}>
+                    <span className={`font-semibold ${isLowStock(p.stock_quantity, p.min_stock_level) ? 'text-amber-600' : 'text-green-600'}`}>
                       {p.stock_quantity} {p.unit}
                     </span>
                   </div>
@@ -298,7 +268,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? 'Edit Produk' : 'Tambah Produk'}
+        title={editingId ? 'Edit Produk' : 'Tambah Produk'}
       >
         <div className="space-y-4">
           <div>
@@ -354,9 +324,9 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
                 value={form.stock_quantity}
                 onChange={(e) => setForm({ ...form, stock_quantity: e.target.value })}
                 className="input-field"
-                disabled={!!editing}
+                disabled={!!editingId}
               />
-              {editing && (
+              {editingId && (
                 <p className="text-xs text-coffee-400 mt-1">Stok diatur via transaksi</p>
               )}
             </div>
@@ -399,7 +369,7 @@ export default function ProductsPage({ onToast }: ProductsPageProps) {
           <div className="flex gap-3 justify-end pt-2">
             <button onClick={() => setModalOpen(false)} className="btn-secondary">Batal</button>
             <button onClick={handleSave} disabled={saving} className="btn-primary">
-              {saving ? 'Menyimpan...' : editing ? 'Simpan Perubahan' : 'Tambah Produk'}
+              {saving ? 'Menyimpan...' : editingId ? 'Simpan Perubahan' : 'Tambah Produk'}
             </button>
           </div>
         </div>

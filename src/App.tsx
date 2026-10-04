@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import Layout from '@/components/Layout';
 import { type Page } from '@/components/Sidebar';
 import Toast from '@/components/Toast';
@@ -7,6 +7,7 @@ import ProductsPage from '@/pages/ProductsPage';
 import CategoriesPage from '@/pages/CategoriesPage';
 import TransactionsPage from '@/pages/TransactionsPage';
 import ReportsPage from '@/pages/ReportsPage';
+import { useStore } from '@/lib/store';
 
 const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   dashboard: { title: 'Dashboard', subtitle: 'Ringkasan stok dan aktivitas' },
@@ -24,12 +25,16 @@ export default function App() {
     show: false,
   });
 
+  const store = useStore();
+
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type, show: true });
     setTimeout(() => setToast((prev) => ({ ...prev, show: false })), 3000);
   }, []);
 
   const meta = pageMeta[page];
+
+  const ctx = useMemo(() => ({ store, onToast: showToast }), [store, showToast]);
 
   return (
     <>
@@ -39,11 +44,11 @@ export default function App() {
         title={meta.title}
         subtitle={meta.subtitle}
       >
-        {page === 'dashboard' && <Dashboard onNavigate={setPage} />}
-        {page === 'products' && <ProductsPage onToast={showToast} />}
-        {page === 'categories' && <CategoriesPage onToast={showToast} />}
-        {page === 'transactions' && <TransactionsPage onToast={showToast} />}
-        {page === 'reports' && <ReportsPage />}
+        {page === 'dashboard' && <Dashboard store={store} onNavigate={setPage} />}
+        {page === 'products' && <ProductsPage store={store} onToast={showToast} />}
+        {page === 'categories' && <CategoriesPage store={store} onToast={showToast} />}
+        {page === 'transactions' && <TransactionsPage store={store} onToast={showToast} />}
+        {page === 'reports' && <ReportsPage store={store} />}
       </Layout>
 
       <Toast message={toast.message} type={toast.type} show={toast.show} />

@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
-import { supabase, type Product, type StockTransaction } from '@/lib/supabase';
+import { useState } from 'react';
+import { useStore } from '@/lib/store';
 import { ArrowDownToLine, ArrowUpFromLine, Search, TrendingUp, TrendingDown } from 'lucide-react';
-import Toast from '@/components/Toast';
 
 type TransactionsPageProps = {
+  store: ReturnType<typeof useStore>;
   onToast: (message: string, type?: 'success' | 'error') => void;
 };
 
@@ -15,34 +15,19 @@ type FormState = {
 
 const emptyForm: FormState = { product_id: '', quantity: '1', note: '' };
 
-export default function TransactionsPage({ onToast }: TransactionsPageProps) {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [history, setHistory] = useState<StockTransaction[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function TransactionsPage({ store, onToast }: TransactionsPageProps) {
+  const { products, transactions } = store;
   const [activeTab, setActiveTab] = useState<'in' | 'out'>('in');
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    const [{ data: prods }, { data: txs }] = await Promise.all([
-      supabase.from('products').select('*, categories(name)').order('name'),
-      supabase.from('stock_transactions')
-        .select('id, product_id, type, quantity, note, created_at, products(name, unit)')
-        .order('created_at', { ascending: false })
-        .limit(50),
-    ]);
-    if (prods) setProducts(prods as Product[]);
-    if (txs) setHistory(txs as unknown as StockTransaction[]);
-    setLoading(false);
-  }, []);
+  const filteredHistory = transactions.filter((tx) => {
+    const productName = products.find((p) => p.id === tx.product_id)?.name ?? '';
+    return productName.toLowerCase().includes(search.toLowerCase());
+  });
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!form.product_id) {
       onToast('Pilih produk terlebih dahulu', 'error');
       return;
@@ -62,27 +47,16 @@ export default function TransactionsPage({ onToast }: TransactionsPageProps) {
     }
 
     setSaving(true);
-    const { error } = await supabase.from('stock_transactions').insert({
+    store.addTransaction({
       product_id: form.product_id,
       type: activeTab,
       quantity: qty,
       note: form.note.trim(),
     });
-
-    if (error) {
-      onToast('Gagal mencatat transaksi', 'error');
-    } else {
-      onToast(activeTab === 'in' ? 'Stok masuk berhasil dicatat' : 'Stok keluar berhasil dicatat');
-      setForm(emptyForm);
-      fetchData();
-    }
+    onToast(activeTab === 'in' ? 'Stok masuk berhasil dicatat' : 'Stok keluar berhasil dicatat');
+    setForm(emptyForm);
     setSaving(false);
   };
-
-  const filteredHistory = history.filter((tx) => {
-    const productName = (tx.products as unknown as { name: string } | null)?.name ?? '';
-    return productName.toLowerCase().includes(search.toLowerCase());
-  });
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -186,7 +160,7 @@ export default function TransactionsPage({ onToast }: TransactionsPageProps) {
           </div>
         </div>
 
-        {loading ? (
+        {store.loading ? (
           <div className="space-y-3">
             {[0, 1, 2, 3].map((i) => (
               <div key={i} className="h-14 bg-coffee-50 rounded-xl animate-pulse" />
@@ -199,8 +173,9 @@ export default function TransactionsPage({ onToast }: TransactionsPageProps) {
         ) : (
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {filteredHistory.map((tx) => {
-              const productName = (tx.products as unknown as { name: string } | null)?.name ?? '—';
-              const productUnit = (tx.products as unknown as { unit: string } | null)?.unit ?? '';
+              const product = products.find((p) => p.id === tx.product_id);
+              const productName = product?.name ?? '—';
+              const productUnit = product?.unit ?? '';
               return (
                 <div key={tx.id} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-coffee-50 transition-colors border border-coffee-50">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0

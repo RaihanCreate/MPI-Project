@@ -1,74 +1,51 @@
-import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useMemo, useState } from 'react';
+import { useStore } from '@/lib/store';
 import { Search, TrendingUp, TrendingDown, FileDown, ClipboardList } from 'lucide-react';
 
-type ReportRow = {
-  id: string;
-  product_name: string;
-  product_unit: string;
-  category_name: string | null;
-  type: 'in' | 'out';
-  quantity: number;
-  note: string;
-  created_at: string;
+type ReportsPageProps = {
+  store: ReturnType<typeof useStore>;
 };
 
-export default function ReportsPage() {
-  const [rows, setRows] = useState<ReportRow[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function ReportsPage({ store }: ReportsPageProps) {
+  const { transactions, products, categories } = store;
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'in' | 'out'>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const fetchReports = useCallback(async () => {
-    setLoading(true);
-    let query = supabase
-      .from('stock_transactions')
-      .select('id, type, quantity, note, created_at, products(name, unit, categories(name))')
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    if (dateFrom) {
-      const from = new Date(dateFrom);
-      from.setHours(0, 0, 0, 0);
-      query = query.gte('created_at', from.toISOString());
-    }
-    if (dateTo) {
-      const to = new Date(dateTo);
-      to.setHours(23, 59, 59, 999);
-      query = query.lte('created_at', to.toISOString());
-    }
-
-    const { data, error } = await query;
-    if (!error && data) {
-      const mapped: ReportRow[] = data.map((t) => {
-        const product = (t as unknown as { products: { name: string; unit: string; categories: { name: string } | null } | null }).products;
-        return {
-          id: t.id,
-          product_name: product?.name ?? '—',
-          product_unit: product?.unit ?? '',
-          category_name: product?.categories?.name ?? null,
-          type: t.type,
-          quantity: Number(t.quantity),
-          note: t.note ?? '',
-          created_at: t.created_at,
-        };
-      });
-      setRows(mapped);
-    }
-    setLoading(false);
-  }, [dateFrom, dateTo]);
-
-  useEffect(() => {
-    fetchReports();
-  }, [fetchReports]);
+  const rows = useMemo(() => {
+    return transactions.map((tx) => {
+      const product = products.find((p) => p.id === tx.product_id);
+      const category = categories.find((c) => c.id === product?.category_id);
+      return {
+        id: tx.id,
+        product_name: product?.name ?? '—',
+        product_unit: product?.unit ?? '',
+        category_name: category?.name ?? null,
+        type: tx.type,
+        quantity: tx.quantity,
+        note: tx.note ?? '',
+        created_at: tx.created_at,
+      };
+    });
+  }, [transactions, products, categories]);
 
   const filtered = rows.filter((r) => {
     const matchesSearch = r.product_name.toLowerCase().includes(search.toLowerCase()) ||
       r.note.toLowerCase().includes(search.toLowerCase());
     const matchesType = filterType === 'all' || r.type === filterType;
-    return matchesSearch && matchesType;
+    let matchesDate = true;
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setHours(0, 0, 0, 0);
+      matchesDate = new Date(r.created_at) >= from;
+    }
+    if (dateTo && matchesDate) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59, 999);
+      matchesDate = new Date(r.created_at) <= to;
+    }
+    return matchesSearch && matchesType && matchesDate;
   });
 
   const totalIn = filtered.filter((r) => r.type === 'in').reduce((s, r) => s + r.quantity, 0);
@@ -176,7 +153,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Table */}
-      {loading ? (
+      {store.loading ? (
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map((i) => (
             <div key={i} className="h-14 bg-coffee-50 rounded-xl animate-pulse" />
